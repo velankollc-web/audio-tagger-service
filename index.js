@@ -2,7 +2,6 @@ const express = require("express");
 const multer = require("multer");
 const { exec } = require("child_process");
 const fs = require("fs");
-const path = require("path");
 
 const app = express();
 const upload = multer({ dest: "/tmp" });
@@ -21,34 +20,37 @@ app.post(
       const output = `/tmp/output-${Date.now()}.mp3`;
       const coverConverted = `/tmp/cover-${Date.now()}.jpg`;
 
-      // Convertit d'abord la cover en JPEG (gère HEIC, PNG, WEBP, etc.)
       const convertCmd = `ffmpeg -y -i "${cover.path}" "${coverConverted}"`;
 
       exec(convertCmd, (convertErr) => {
         if (convertErr) {
-          console.error("Cover conversion error:", convertErr);
-          return res.status(500).json({ error: "Cover conversion error" });
+          console.warn("Cover conversion failed, will output MP3 without cover:", convertErr.message);
         }
 
-        const cmd = `
-          ffmpeg -y \
-          -i "${audio.path}" \
-          -i "${coverConverted}" \
-          -map 0:a -map 1:v \
-          -c copy \
-          -id3v2_version 3 \
-          -metadata:s:v title="Cover" \
-          -metadata:s:v comment="Cover (front)" \
-          "${output}"
-        `;
+        const coverOk = !convertErr && fs.existsSync(coverConverted);
+
+        const cmd = coverOk
+          ? `ffmpeg -y \
+              -i "${audio.path}" \
+              -i "${coverConverted}" \
+              -map 0:a -map 1:v \
+              -c copy \
+              -id3v2_version 3 \
+              -metadata:s:v title="Cover" \
+              -metadata:s:v comment="Cover (front)" \
+              "${output}"`
+          : `ffmpeg -y \
+              -i "${audio.path}" \
+              -c copy \
+              "${output}"`;
 
         exec(cmd, (err) => {
-          // Cleanup cover fichiers dans tous les cas
+          // Cleanup covers dans tous les cas
           if (fs.existsSync(cover.path)) fs.unlinkSync(cover.path);
           if (fs.existsSync(coverConverted)) fs.unlinkSync(coverConverted);
 
           if (err) {
-            console.error(err);
+            console.error("FFmpeg error:", err);
             return res.status(500).json({ error: "FFmpeg error" });
           }
 
@@ -59,7 +61,7 @@ app.post(
         });
       });
     } catch (e) {
-      console.error(e);
+      console.error("Server error:", e);
       res.status(500).json({ error: "Server error" });
     }
   }
